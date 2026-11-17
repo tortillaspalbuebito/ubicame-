@@ -1,4 +1,4 @@
-const C='ubicame-v9', T='tiles';
+const C='ubicame-v12', T='tiles';
 const LEAF='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 const FILES=['./','index.html','manifest.json','icon-192.png','icon-512.png',LEAF+'leaflet.min.js',LEAF+'leaflet.min.css'];
 // la app se guarda aunque falle la librería del mapa (se reintenta después)
