@@ -1,0 +1,156 @@
+# Arma la app de Android (APK) de Ubícame cada vez que cambia la app.
+# La APK queda en la sección "Releases" del repositorio.
+name: Construir APK de Ubícame
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['index.html', 'sw.js', '.github/workflows/apk.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      # Llave para firmar la APK. Se crea una sola vez y se guarda en el repositorio,
+      # para que cada versión nueva se instale encima de la anterior sin perder tus datos.
+      - name: Llave de firma
+        run: |
+          if [ ! -f apk-key/ubicame.keystore ]; then
+            mkdir -p apk-key
+            keytool -genkeypair -keystore apk-key/ubicame.keystore -alias ubicame -keyalg RSA -keysize 2048 \
+              -validity 10000 -storepass ubicame-app -keypass ubicame-app -dname "CN=Ubicame, O=Ubicame, C=MX"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add apk-key/ubicame.keystore
+            git commit -m "Llave de firma del APK [skip ci]"
+            git push
+          fi
+
+      - name: Preparar el proyecto de Android
+        run: |
+          mkdir -p build/www
+          cp index.html sw.js manifest.json icon-192.png icon-512.png build/www/
+          cd build
+          cat > package.json <<'JSON'
+          {
+            "name": "ubicame",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^7.0.0",
+              "@capacitor/cli": "^7.0.0",
+              "@capacitor/core": "^7.0.0",
+              "@capacitor/filesystem": "^7.0.0",
+              "@capacitor/local-notifications": "^7.0.0",
+              "@capacitor/share": "^7.0.0",
+              "@capacitor-community/background-geolocation": "^1.2.20",
+              "@capacitor-community/text-to-speech": "^6.0.0",
+              "@capawesome/capacitor-torch": "^7.0.2",
+              "leaflet": "1.9.4"
+            }
+          }
+          JSON
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "mx.ubicame.app",
+            "appName": "Ubícame",
+            "webDir": "www",
+            "android": { "useLegacyBridge": true }
+          }
+          JSON
+          npm install --no-audit --no-fund --legacy-peer-deps
+          # El mapa va dentro de la APK (no depende de internet para abrir)
+          mkdir -p www/leaflet
+          cp node_modules/leaflet/dist/leaflet.js node_modules/leaflet/dist/leaflet.css www/leaflet/
+          cp -r node_modules/leaflet/dist/images www/leaflet/
+          sed -i 's#https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css#leaflet/leaflet.css#; s#https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js#leaflet/leaflet.js#' www/index.html
+          sed -i "s#const LEAF='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';#const LEAF='./leaflet/';#; s#LEAF+'leaflet.min.js',LEAF+'leaflet.min.css'#LEAF+'leaflet.js',LEAF+'leaflet.css'#" www/sw.js
+          grep -q 'leaflet/leaflet.js' www/index.html
+          npx cap add android
+
+      - name: Permisos, íconos, versión y firma
+        env:
+          RUN: ${{ github.run_number }}
+        run: |
+          cd build
+          node <<'NODE'
+          const fs = require('fs');
+          const man = 'android/app/src/main/AndroidManifest.xml';
+          let m = fs.readFileSync(man, 'utf8');
+          const perms = ['ACCESS_COARSE_LOCATION','ACCESS_FINE_LOCATION','ACCESS_BACKGROUND_LOCATION','FOREGROUND_SERVICE',
+            'FOREGROUND_SERVICE_LOCATION','POST_NOTIFICATIONS','WAKE_LOCK','VIBRATE','CAMERA','FLASHLIGHT']
+            .filter(p => !m.includes('android.permission.' + p))
+            .map(p => `    <uses-permission android:name="android.permission.${p}" />`).join('\n');
+          const extra = `${perms}\n    <uses-feature android:name="android.hardware.location.gps" android:required="false" />\n` +
+            `    <uses-feature android:name="android.hardware.camera" android:required="false" />\n` +
+            `    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />\n` +
+            `    <queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>\n`;
+          if (!m.includes('<application')) throw new Error('No encontré <application en el manifiesto');
+          m = m.replace('<application', extra + '    <application');
+          fs.writeFileSync(man, m);
+
+          const gr = 'android/app/build.gradle';
+          let g = fs.readFileSync(gr, 'utf8');
+          const run = process.env.RUN || '1';
+          if (!/versionCode \d+/.test(g)) throw new Error('No encontré versionCode');
+          g = g.replace(/versionCode \d+/, `versionCode ${run}`).replace(/versionName "[^"]*"/, `versionName "1.${run}"`);
+          const ks = require('path').resolve('../apk-key/ubicame.keystore').replace(/\\/g, '/');
+          const signing = `android {\n    signingConfigs {\n        debug {\n            storeFile file("${ks}")\n` +
+            `            storePassword "ubicame-app"\n            keyAlias "ubicame"\n            keyPassword "ubicame-app"\n        }\n    }`;
+          if (!g.includes('android {')) throw new Error('No encontré el bloque android');
+          g = g.replace('android {', signing);
+          fs.writeFileSync(gr, g);
+
+          const strings = 'android/app/src/main/res/values/strings.xml';
+          let s = fs.readFileSync(strings, 'utf8');
+          s = s.replace('</resources>', '    <string name="capacitor_background_geolocation_notification_channel_name">Ubicación en segundo plano</string>\n</resources>');
+          fs.writeFileSync(strings, s);
+          console.log('Android listo: versión 1.' + run);
+          NODE
+          for d in android/app/src/main/res/mipmap-*dpi; do
+            cp www/icon-192.png "$d/ic_launcher.png"
+            cp www/icon-192.png "$d/ic_launcher_round.png"
+            if [ -f "$d/ic_launcher_foreground.png" ]; then cp www/icon-192.png "$d/ic_launcher_foreground.png"; fi
+          done
+          rm -rf android/app/src/main/res/mipmap-anydpi-v26
+          npx cap sync android
+
+      - name: Compilar la APK
+        run: |
+          cd build/android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/ubicame.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubicame-apk
+          path: ubicame.apk
+
+      - name: Publicar en Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: Ubícame para Android (versión 1.${{ github.run_number }})
+          body: |
+            Toca **ubicame.apk** para descargarla e instalarla en tu Android.
+            Si el celular lo pide, permite "Instalar apps desconocidas" para Chrome o tu navegador.
+          files: ubicame.apk
+          make_latest: true
+          
