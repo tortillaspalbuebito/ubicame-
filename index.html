@@ -117,6 +117,7 @@ html.night #nightOv{display:block}
 <section id="s-mapa">
   <div id="measBox"><b id="measTxt">Toca el mapa para marcar puntos</b><div class="row" style="margin-top:8px"><button class="sec sm" id="measUndo">↶ Deshacer</button><button class="sec sm" id="measClear">Borrar</button><button class="sm" id="measEnd">Terminar</button></div></div>
   <div id="map"></div>
+  <div class="row" id="mTgtRow" style="display:none;margin-bottom:8px"><button class="acc" id="mTgtClear">✕ Quitar destino: <span id="mTgtName"></span></button></div>
   <div class="row"><button id="mCenter">◎ Centrar en mí</button><button class="sec" id="mFollow">Seguirme: sí</button><button class="sec" id="measBtn">📏 Medir</button></div>
   <p class="mut">Cambia entre mapa de calles y <b>topográfico</b> (curvas de nivel y veredas) con el botón de capas, arriba a la derecha del mapa.</p>
   <div class="row" style="margin-top:8px"><a class="btn sec" id="trWaze" target="_blank" rel="noopener">🚗 Tráfico en Waze</a><a class="btn sec" id="trGmaps" target="_blank" rel="noopener">🚦 Tráfico en Google Maps</a></div>
@@ -192,6 +193,7 @@ html.night #nightOv{display:block}
     <div class="big" id="gDist">—</div>
     <div class="mut" id="gBear">Toca “Guiar” en un lugar guardado o “Regresar al inicio” en Ruta.</div>
     <div class="row" style="margin-top:10px"><button class="sec" id="compassBtn">Activar brújula</button></div>
+    <div class="row" id="gClearRow" style="margin-top:8px;display:none"><button class="sec" id="gClear">✕ Quitar destino</button></div>
     <div class="row" id="gExt" style="margin-top:8px;display:none"><a class="btn sm" id="gWaze" target="_blank" rel="noopener">Ir con Waze</a><a class="btn sm" id="gGmaps" target="_blank" rel="noopener">Ir con Google Maps</a></div>
     <p class="mut" style="text-align:left">Sostén el celular plano y lejos de metales. Sin brújula, la flecha apunta al destino con el norte arriba (o hacia donde caminas, si vas en movimiento).</p>
   </div>
@@ -532,8 +534,11 @@ function renderPlaces(){
       <button class="sm" data-g="${i}">Guiar</button><button class="sm sec" data-d="${i}">✕</button></div>`}).join('');
   el.querySelectorAll('img[data-ph]').forEach(async img=>{const u=await photoURL(img.dataset.ph);if(u)img.src=u});
 }
+function clearTarget(){target=null;S.set('target',null);if(tgtL)tgtL.setLatLngs([]);toast('Destino quitado');render()}
 function renderGuide(){
-  if(!target){$('gTitle').textContent='Elige un destino';return}
+  $('gClearRow').style.display=target?'':'none';$('gExt').style.display=target?'':'none';
+  $('mTgtRow').style.display=target?'':'none';if(target)$('mTgtName').textContent=target.name;
+  if(!target){$('gTitle').textContent='Elige un destino';$('gDist').textContent='—';$('gBear').textContent='Toca “Guiar” en un lugar guardado o “Ir” en Explorar.';$('arrow').style.transform='';return}
   $('gTitle').textContent='→ '+target.name;
   $('gExt').style.display='';$('gWaze').href=wazeNav(target);$('gGmaps').href=gmapsNav(target,'walking');
   if(!pos){$('gDist').textContent='Esperando GPS…';return}
@@ -1008,6 +1013,7 @@ $('places').onclick=e=>{
 };
 $('imgView').onclick=()=>$('imgView').classList.remove('on');
 $('compassBtn').onclick=enableCompass;
+$('gClear').onclick=clearTarget;$('mTgtClear').onclick=clearTarget;
 
 // ================= rutas =================
 $('recBtn').onclick=()=>{
