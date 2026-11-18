@@ -27,6 +27,8 @@ jobs:
           java-version: 21
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
 
       # Llave para firmar la APK. Se crea una sola vez y se guarda en el repositorio,
       # para que cada versión nueva se instale encima de la anterior sin perder tus datos.
